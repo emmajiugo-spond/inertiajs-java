@@ -1,6 +1,8 @@
 package io.inertia.core;
 
 import io.inertia.core.props.AlwaysProp;
+import io.inertia.core.props.DeferredProp;
+import io.inertia.core.props.MergeProp;
 import io.inertia.core.props.OptionalProp;
 import io.inertia.core.props.Prop;
 
@@ -26,10 +28,29 @@ public class InertiaEngine {
     public void render(InertiaRequest req, InertiaResponse res,
                        String component, Map<String, Object> props) throws IOException {
         Map<String, Object> mergedProps = mergeSharedProps(req, props);
-        Map<String, Object> filteredProps = filterProps(req, component, mergedProps);
+        boolean isPartialReload = isPartialReloadFor(req, component);
+
+        // Build deferred props map (only on initial render, not partial reloads)
+        Map<String, List<String>> deferredProps = null;
+        if (!isPartialReload) {
+            deferredProps = buildDeferredPropsMap(mergedProps);
+        }
+
+        Map<String, Object> filteredProps = filterProps(req, component, mergedProps, isPartialReload);
+        MergeMetadata mergeMetadata = buildMergeMetadata(filteredProps);
         Map<String, Object> resolvedProps = resolveProps(filteredProps);
 
-        PageObject page = new PageObject(component, resolvedProps, req.getRequestPath(), config.getVersion());
+        PageObject page = PageObject.builder()
+                .component(component)
+                .props(resolvedProps)
+                .url(req.getRequestPath())
+                .version(config.getVersion())
+                .deferredProps(deferredProps)
+                .mergeProps(mergeMetadata.mergeProps)
+                .prependProps(mergeMetadata.prependProps)
+                .deepMergeProps(mergeMetadata.deepMergeProps)
+                .matchPropsOn(mergeMetadata.matchPropsOn)
+                .build();
 
         if (isInertiaRequest(req)) {
             renderJson(res, page);
@@ -80,24 +101,44 @@ public class InertiaEngine {
         return merged;
     }
 
+    // ── Internal: check if this is a partial reload for this component ─
+
+    private boolean isPartialReloadFor(InertiaRequest req, String component) {
+        String partialComponent = req.getHeader("X-Inertia-Partial-Component");
+        return partialComponent != null && partialComponent.equals(component);
+    }
+
+    // ── Internal: build deferred props group map ─────────────────────
+
+    private Map<String, List<String>> buildDeferredPropsMap(Map<String, Object> props) {
+        Map<String, List<String>> groups = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : props.entrySet()) {
+            if (entry.getValue() instanceof DeferredProp<?> deferred) {
+                groups.computeIfAbsent(deferred.group(), k -> new ArrayList<>())
+                        .add(entry.getKey());
+            }
+        }
+        return groups;
+    }
+
     // ── Internal: filter props for partial reloads ───────────────────
 
     private Map<String, Object> filterProps(InertiaRequest req, String component,
-                                            Map<String, Object> props) {
-        String partialComponent = req.getHeader("X-Inertia-Partial-Component");
-
-        // Not a partial reload — include everything except OptionalProp
-        if (partialComponent == null || !partialComponent.equals(component)) {
+                                            Map<String, Object> props, boolean isPartialReload) {
+        // Not a partial reload — include everything except OptionalProp and DeferredProp
+        if (!isPartialReload) {
             Map<String, Object> result = new LinkedHashMap<>();
             for (Map.Entry<String, Object> entry : props.entrySet()) {
-                if (!(entry.getValue() instanceof OptionalProp<?>)) {
-                    result.put(entry.getKey(), entry.getValue());
+                Object value = entry.getValue();
+                if (value instanceof OptionalProp<?> || value instanceof DeferredProp<?>) {
+                    continue;
                 }
+                result.put(entry.getKey(), value);
             }
             return result;
         }
 
-        // Partial reload with "only" list
+        // Partial reload with "only" list (also used by client to fetch deferred props)
         String partialData = req.getHeader("X-Inertia-Partial-Data");
         if (partialData != null && !partialData.isBlank()) {
             Set<String> only = Set.of(partialData.split(","));
@@ -129,8 +170,38 @@ public class InertiaEngine {
             return result;
         }
 
-        // Partial reload with no only/except — same as full render but include OptionalProp too
+        // Partial reload with no only/except — include everything including OptionalProp
         return new LinkedHashMap<>(props);
+    }
+
+    // ── Internal: build merge metadata from MergeProp values ──────────
+
+    private record MergeMetadata(
+            List<String> mergeProps,
+            List<String> prependProps,
+            List<String> deepMergeProps,
+            Map<String, String> matchPropsOn) {}
+
+    private MergeMetadata buildMergeMetadata(Map<String, Object> props) {
+        List<String> merge = new ArrayList<>();
+        List<String> prepend = new ArrayList<>();
+        List<String> deep = new ArrayList<>();
+        Map<String, String> matchOn = new LinkedHashMap<>();
+
+        for (Map.Entry<String, Object> entry : props.entrySet()) {
+            if (entry.getValue() instanceof MergeProp<?> mp) {
+                switch (mp.getStrategy()) {
+                    case APPEND -> merge.add(entry.getKey());
+                    case PREPEND -> prepend.add(entry.getKey());
+                    case DEEP -> deep.add(entry.getKey());
+                }
+                if (mp.getMatchOn() != null) {
+                    matchOn.put(entry.getKey(), mp.getMatchOn());
+                }
+            }
+        }
+
+        return new MergeMetadata(merge, prepend, deep, matchOn);
     }
 
     // ── Internal: resolve Prop<T> wrappers to raw values ─────────────
@@ -141,6 +212,8 @@ public class InertiaEngine {
             Object value = entry.getValue();
             if (value instanceof Prop<?> prop) {
                 resolved.put(entry.getKey(), prop.resolve());
+            } else if (value instanceof MergeProp<?> mp) {
+                resolved.put(entry.getKey(), mp.resolve());
             } else {
                 resolved.put(entry.getKey(), value);
             }

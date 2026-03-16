@@ -1,34 +1,41 @@
 package io.inertia.core;
 
+import java.util.function.Supplier;
+
 public final class InertiaConfig {
 
-    private final String version;
+    private final Supplier<String> versionSupplier;
     private final TemplateResolver templateResolver;
     private final JsonSerializer jsonSerializer;
 
     private InertiaConfig(Builder builder) {
-        this.version = builder.version;
+        this.versionSupplier = builder.versionSupplier;
         this.templateResolver = builder.templateResolver;
         this.jsonSerializer = builder.jsonSerializer != null
                 ? builder.jsonSerializer
                 : new JacksonJsonSerializer();
     }
 
-    public String getVersion() { return version; }
+    public String getVersion() { return versionSupplier.get(); }
     public TemplateResolver getTemplateResolver() { return templateResolver; }
     public JsonSerializer getJsonSerializer() { return jsonSerializer; }
 
     public static Builder builder() { return new Builder(); }
 
     public static final class Builder {
-        private String version = "1";
+        private Supplier<String> versionSupplier = () -> "1";
         private TemplateResolver templateResolver;
         private JsonSerializer jsonSerializer;
 
         private Builder() {}
 
         public Builder version(String version) {
-            this.version = version;
+            this.versionSupplier = () -> version;
+            return this;
+        }
+
+        public Builder versionSupplier(Supplier<String> versionSupplier) {
+            this.versionSupplier = versionSupplier;
             return this;
         }
 

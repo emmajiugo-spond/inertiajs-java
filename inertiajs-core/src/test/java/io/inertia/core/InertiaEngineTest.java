@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -407,6 +408,254 @@ class InertiaEngineTest {
 
             var pageProps = parsePageProps(res.getBody());
             assertThat(pageProps).containsEntry("data", "lazy-value");
+        }
+    }
+
+    // ── Deferred Props ───────────────────────────────────────────────
+
+    @Nested
+    class DeferredPropsTests {
+
+        @SuppressWarnings("unchecked")
+        private Map<String, List<String>> parseDeferredProps(String json) throws IOException {
+            Map<String, Object> page = mapper.readValue(json, MAP_TYPE);
+            return (Map<String, List<String>>) page.get("deferredProps");
+        }
+
+        @Test
+        void deferredPropExcludedFromInitialRender() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("comments", InertiaProps.defer(() -> List.of("c1", "c2")));
+
+            engine.render(req, res, "Test", props);
+
+            var pageProps = parsePageProps(res.getBody());
+            assertThat(pageProps).containsKey("title");
+            assertThat(pageProps).doesNotContainKey("comments");
+        }
+
+        @Test
+        void deferredPropAppearsInDeferredPropsField() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("comments", InertiaProps.defer(() -> List.of("c1", "c2")));
+
+            engine.render(req, res, "Test", props);
+
+            var deferred = parseDeferredProps(res.getBody());
+            assertThat(deferred).isNotNull();
+            assertThat(deferred).containsKey("default");
+            assertThat(deferred.get("default")).containsExactly("comments");
+        }
+
+        @Test
+        void deferredPropsGroupedCorrectly() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("comments", InertiaProps.defer(() -> "c"));
+            props.put("analytics", InertiaProps.defer(() -> "a"));
+            props.put("sidebar", InertiaProps.defer(() -> "s", "sidebar"));
+
+            engine.render(req, res, "Test", props);
+
+            var deferred = parseDeferredProps(res.getBody());
+            assertThat(deferred).containsKey("default");
+            assertThat(deferred.get("default")).containsExactlyInAnyOrder("comments", "analytics");
+            assertThat(deferred).containsKey("sidebar");
+            assertThat(deferred.get("sidebar")).containsExactly("sidebar");
+        }
+
+        @Test
+        void deferredPropsNotInPageObjectWhenNoneExist() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            engine.render(req, res, "Test", Map.of("title", "Hello"));
+
+            var deferred = parseDeferredProps(res.getBody());
+            assertThat(deferred).isNull();
+        }
+
+        @Test
+        void deferredPropResolvedViaPartialReload() throws IOException {
+            var req = new StubInertiaRequest().asInertia()
+                    .withHeader("X-Inertia-Partial-Component", "Test")
+                    .withHeader("X-Inertia-Partial-Data", "comments");
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("comments", InertiaProps.defer(() -> List.of("c1", "c2")));
+
+            engine.render(req, res, "Test", props);
+
+            var pageProps = parsePageProps(res.getBody());
+            assertThat(pageProps).containsKey("comments");
+            @SuppressWarnings("unchecked")
+            var comments = (List<String>) pageProps.get("comments");
+            assertThat(comments).containsExactly("c1", "c2");
+        }
+
+        @Test
+        void deferredPropsFieldNotIncludedInPartialReload() throws IOException {
+            var req = new StubInertiaRequest().asInertia()
+                    .withHeader("X-Inertia-Partial-Component", "Test")
+                    .withHeader("X-Inertia-Partial-Data", "comments");
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("comments", InertiaProps.defer(() -> List.of("c1", "c2")));
+
+            engine.render(req, res, "Test", props);
+
+            var deferred = parseDeferredProps(res.getBody());
+            assertThat(deferred).isNull();
+        }
+
+        @Test
+        void deferredPropSupplierNotCalledOnInitialRender() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            boolean[] called = {false};
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("expensive", InertiaProps.defer(() -> { called[0] = true; return "data"; }));
+
+            engine.render(req, res, "Test", props);
+
+            assertThat(called[0]).isFalse();
+        }
+    }
+
+    // ── Merge Props ──────────────────────────────────────────────────
+
+    @Nested
+    class MergePropsTests {
+
+        @SuppressWarnings("unchecked")
+        private List<String> parseField(String json, String field) throws IOException {
+            Map<String, Object> page = mapper.readValue(json, MAP_TYPE);
+            return (List<String>) page.get(field);
+        }
+
+        @SuppressWarnings("unchecked")
+        private Map<String, String> parseMatchPropsOn(String json) throws IOException {
+            Map<String, Object> page = mapper.readValue(json, MAP_TYPE);
+            return (Map<String, String>) page.get("matchPropsOn");
+        }
+
+        @Test
+        void mergePropValueIsResolved() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("items", InertiaProps.merge(() -> List.of("a", "b")));
+
+            engine.render(req, res, "Test", props);
+
+            var pageProps = parsePageProps(res.getBody());
+            assertThat(pageProps).containsKey("items");
+        }
+
+        @Test
+        void mergePropAppearsInMergePropsField() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("items", InertiaProps.merge(() -> List.of("a", "b")));
+
+            engine.render(req, res, "Test", props);
+
+            var mergeProps = parseField(res.getBody(), "mergeProps");
+            assertThat(mergeProps).containsExactly("items");
+        }
+
+        @Test
+        void prependPropAppearsInPrependPropsField() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("items", InertiaProps.prepend(() -> List.of("a", "b")));
+
+            engine.render(req, res, "Test", props);
+
+            var prependProps = parseField(res.getBody(), "prependProps");
+            assertThat(prependProps).containsExactly("items");
+        }
+
+        @Test
+        void deepMergePropAppearsInDeepMergePropsField() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("data", InertiaProps.deepMerge(() -> Map.of("key", "value")));
+
+            engine.render(req, res, "Test", props);
+
+            var deepMergeProps = parseField(res.getBody(), "deepMergeProps");
+            assertThat(deepMergeProps).containsExactly("data");
+        }
+
+        @Test
+        void matchOnAppearsInMatchPropsOnField() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("items", InertiaProps.merge(() -> List.of()).matchOn("id"));
+
+            engine.render(req, res, "Test", props);
+
+            var matchOn = parseMatchPropsOn(res.getBody());
+            assertThat(matchOn).containsEntry("items", "id");
+        }
+
+        @Test
+        void noMergeFieldsWhenNoMergeProps() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            engine.render(req, res, "Test", Map.of("title", "Hello"));
+
+            var mergeProps = parseField(res.getBody(), "mergeProps");
+            var prependProps = parseField(res.getBody(), "prependProps");
+            var deepMergeProps = parseField(res.getBody(), "deepMergeProps");
+            assertThat(mergeProps).isNull();
+            assertThat(prependProps).isNull();
+            assertThat(deepMergeProps).isNull();
+        }
+
+        @Test
+        void multipleMergeStrategiesTogether() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("feed", InertiaProps.merge(() -> List.of("post1")));
+            props.put("notifications", InertiaProps.prepend(() -> List.of("n1")));
+            props.put("settings", InertiaProps.deepMerge(() -> Map.of("theme", "dark")));
+
+            engine.render(req, res, "Test", props);
+
+            assertThat(parseField(res.getBody(), "mergeProps")).containsExactly("feed");
+            assertThat(parseField(res.getBody(), "prependProps")).containsExactly("notifications");
+            assertThat(parseField(res.getBody(), "deepMergeProps")).containsExactly("settings");
         }
     }
 }

@@ -7,18 +7,28 @@ import java.nio.charset.StandardCharsets;
 /**
  * Default TemplateResolver that loads an HTML file from the classpath
  * and replaces the {@code @inertia} placeholder with the Inertia root div.
+ *
+ * By default, the template is cached at construction time. Pass {@code cache=false}
+ * to re-read the file on every request (useful with Spring Boot DevTools).
  */
 public final class ClasspathTemplateResolver implements TemplateResolver {
 
     private static final String PLACEHOLDER = "@inertia";
-    private final String template;
+    private final String classpathLocation;
+    private final String cachedTemplate;
 
     public ClasspathTemplateResolver(String classpathLocation) {
-        this.template = loadTemplate(classpathLocation);
+        this(classpathLocation, true);
+    }
+
+    public ClasspathTemplateResolver(String classpathLocation, boolean cache) {
+        this.classpathLocation = classpathLocation;
+        this.cachedTemplate = cache ? loadTemplate(classpathLocation) : null;
     }
 
     @Override
     public String resolve(String pageJson) {
+        String template = cachedTemplate != null ? cachedTemplate : loadTemplate(classpathLocation);
         String div = "<div id=\"app\" data-page=\"" + escapeHtml(pageJson) + "\"></div>";
         return template.replace(PLACEHOLDER, div);
     }

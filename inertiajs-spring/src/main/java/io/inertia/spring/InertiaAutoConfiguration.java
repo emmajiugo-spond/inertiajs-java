@@ -23,7 +23,8 @@ public class InertiaAutoConfiguration {
                                        ObjectProvider<ObjectMapper> objectMapper) {
         InertiaConfig config = InertiaConfig.builder()
                 .version(properties.getVersion())
-                .templateResolver(new ClasspathTemplateResolver(properties.getTemplatePath()))
+                .templateResolver(new ClasspathTemplateResolver(
+                        properties.getTemplatePath(), properties.isCacheTemplates()))
                 .jsonSerializer(new JacksonJsonSerializer(
                         objectMapper.getIfAvailable(ObjectMapper::new)))
                 .build();
