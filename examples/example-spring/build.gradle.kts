@@ -35,24 +35,54 @@ tasks.register<Exec>("dev") {
     description = "Starts Spring Boot, then Vite dev server"
     group = "application"
     dependsOn("npmInstall")
-    workingDir = file("frontend")
+    workingDir = projectDir
     commandLine(
         "sh", "-c",
         """
-        cd ${projectDir} && ${rootDir}/gradlew :examples:example-spring:bootRun --args='--spring.profiles.active=dev' &
+        cleanup() {
+            echo ""
+            echo "Shutting down..."
+            kill ${'$'}VITE_PID ${'$'}BOOT_PID 2>/dev/null
+            wait ${'$'}VITE_PID ${'$'}BOOT_PID 2>/dev/null
+        }
+        trap cleanup EXIT INT TERM
+
+        # Kill any leftover processes on our ports
+        lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+        sleep 1
+
+        # Start Spring Boot in the background
+        ${rootDir}/gradlew :examples:example-spring:bootRun --args='--spring.profiles.active=dev' &
         BOOT_PID=${'$'}!
         echo "⏳ Waiting for Spring Boot on port 8080..."
-        while ! curl -s http://localhost:8080 > /dev/null 2>&1; do sleep 0.5; done
+        for i in $(seq 1 60); do
+            if curl -s -o /dev/null http://localhost:8080 2>/dev/null; then
+                break
+            fi
+            if ! kill -0 ${'$'}BOOT_PID 2>/dev/null; then
+                echo "❌ Spring Boot failed to start"
+                exit 1
+            fi
+            sleep 1
+        done
+        if ! curl -s -o /dev/null http://localhost:8080 2>/dev/null; then
+            echo "❌ Spring Boot did not start within 60 seconds"
+            exit 1
+        fi
         echo "✓ Spring Boot started on http://localhost:8080"
-        cd ${projectDir}/frontend && npx vite &
+
+        # Start Vite dev server
+        cd frontend && npx vite --port 5173 --strictPort &
         VITE_PID=${'$'}!
+        cd ..
         sleep 1
         echo "✓ Vite dev server started on http://localhost:5173"
         echo ""
         echo "🚀 Open http://localhost:5173"
         echo ""
+
+        # Wait for Spring Boot (main process)
         wait ${'$'}BOOT_PID
-        kill ${'$'}VITE_PID 2>/dev/null
         """.trimIndent()
     )
 }
