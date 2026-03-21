@@ -7,6 +7,9 @@ public final class InertiaConfig {
     private final Supplier<String> versionSupplier;
     private final TemplateResolver templateResolver;
     private final JsonSerializer jsonSerializer;
+    private final SsrClient ssrClient;
+    private final boolean ssrEnabled;
+    private final boolean ssrFailOnError;
 
     private InertiaConfig(Builder builder) {
         this.versionSupplier = builder.versionSupplier;
@@ -14,11 +17,17 @@ public final class InertiaConfig {
         this.jsonSerializer = builder.jsonSerializer != null
                 ? builder.jsonSerializer
                 : new JacksonJsonSerializer();
+        this.ssrClient = builder.ssrClient;
+        this.ssrEnabled = builder.ssrEnabled;
+        this.ssrFailOnError = builder.ssrFailOnError;
     }
 
     public String getVersion() { return versionSupplier.get(); }
     public TemplateResolver getTemplateResolver() { return templateResolver; }
     public JsonSerializer getJsonSerializer() { return jsonSerializer; }
+    public SsrClient getSsrClient() { return ssrClient; }
+    public boolean isSsrEnabled() { return ssrEnabled; }
+    public boolean isSsrFailOnError() { return ssrFailOnError; }
 
     public static Builder builder() { return new Builder(); }
 
@@ -26,6 +35,9 @@ public final class InertiaConfig {
         private Supplier<String> versionSupplier = () -> "1";
         private TemplateResolver templateResolver;
         private JsonSerializer jsonSerializer;
+        private SsrClient ssrClient;
+        private boolean ssrEnabled = true;
+        private boolean ssrFailOnError = false;
 
         private Builder() {}
 
@@ -46,6 +58,21 @@ public final class InertiaConfig {
 
         public Builder jsonSerializer(JsonSerializer jsonSerializer) {
             this.jsonSerializer = jsonSerializer;
+            return this;
+        }
+
+        public Builder ssrClient(SsrClient ssrClient) {
+            this.ssrClient = ssrClient;
+            return this;
+        }
+
+        public Builder ssrEnabled(boolean ssrEnabled) {
+            this.ssrEnabled = ssrEnabled;
+            return this;
+        }
+
+        public Builder ssrFailOnError(boolean ssrFailOnError) {
+            this.ssrFailOnError = ssrFailOnError;
             return this;
         }
 
