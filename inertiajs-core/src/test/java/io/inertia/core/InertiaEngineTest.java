@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InertiaEngineTest {
 
@@ -828,6 +829,212 @@ class InertiaEngineTest {
             var page = parsePage(res.getBody());
             assertThat(page).doesNotContainKey("encryptHistory");
             assertThat(page).doesNotContainKey("clearHistory");
+        }
+    }
+
+    // ── Header Trimming ───────────────────────────────────────────────
+
+    @Nested
+    class HeaderTrimming {
+
+        @Test
+        void partialDataHeaderWithSpaces() throws IOException {
+            var req = new StubInertiaRequest().asInertia()
+                    .withHeader("X-Inertia-Partial-Component", "Test")
+                    .withHeader("X-Inertia-Partial-Data", "title, description");
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("description", "World");
+            props.put("extra", "Ignored");
+
+            engine.render(req, res, "Test", props);
+
+            var pageProps = parsePageProps(res.getBody());
+            assertThat(pageProps).containsKey("title");
+            assertThat(pageProps).containsKey("description");
+            assertThat(pageProps).doesNotContainKey("extra");
+        }
+
+        @Test
+        void partialExceptHeaderWithSpaces() throws IOException {
+            var req = new StubInertiaRequest().asInertia()
+                    .withHeader("X-Inertia-Partial-Component", "Test")
+                    .withHeader("X-Inertia-Partial-Except", "description, extra");
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("description", "World");
+            props.put("extra", "Ignored");
+
+            engine.render(req, res, "Test", props);
+
+            var pageProps = parsePageProps(res.getBody());
+            assertThat(pageProps).containsKey("title");
+            assertThat(pageProps).doesNotContainKey("description");
+            assertThat(pageProps).doesNotContainKey("extra");
+        }
+
+        @Test
+        void exceptOncePropsHeaderWithSpaces() throws IOException {
+            var req = new StubInertiaRequest().asInertia()
+                    .withHeader("X-Inertia-Except-Once-Props", "plans, sidebar");
+            var res = new StubInertiaResponse();
+
+            Map<String, Object> props = new HashMap<>();
+            props.put("title", "Hello");
+            props.put("plans", InertiaProps.once(() -> List.of("free", "pro")));
+            props.put("sidebar", InertiaProps.once(() -> List.of("nav")));
+
+            engine.render(req, res, "Test", props);
+
+            var pageProps = parsePageProps(res.getBody());
+            assertThat(pageProps).containsKey("title");
+            assertThat(pageProps).doesNotContainKey("plans");
+            assertThat(pageProps).doesNotContainKey("sidebar");
+        }
+    }
+
+    // ── Null Validation ───────────────────────────────────────────────
+
+    @Nested
+    class NullValidation {
+
+        @Test
+        void throwsOnNullRequest() {
+            var res = new StubInertiaResponse();
+            assertThatThrownBy(() -> engine.render(null, res, "Test", Map.of()))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("req");
+        }
+
+        @Test
+        void throwsOnNullResponse() {
+            var req = new StubInertiaRequest().asInertia();
+            assertThatThrownBy(() -> engine.render(req, null, "Test", Map.of()))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("res");
+        }
+
+        @Test
+        void throwsOnNullComponent() {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+            assertThatThrownBy(() -> engine.render(req, res, null, Map.of()))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("component");
+        }
+
+        @Test
+        void handlesNullPropsGracefully() throws IOException {
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            engine.render(req, res, "Test", null);
+
+            assertThat(res.getStatus()).isEqualTo(200);
+            var pageProps = parsePageProps(res.getBody());
+            assertThat(pageProps).containsKey("errors");
+        }
+    }
+
+    // ── SSR Rendering ─────────────────────────────────────────────────
+
+    @Nested
+    class SsrRendering {
+
+        private final SsrClient successSsrClient = pageJson -> new SsrResponse(
+                List.of("<title>SSR</title>"),
+                "<div id=\"app\" data-page='" + pageJson + "'><h1>SSR Content</h1></div>"
+        );
+
+        private TemplateResolver ssrTemplate() {
+            return new TemplateResolver() {
+                @Override
+                public String resolve(String pageJson) {
+                    return "<html><head></head><body><div id=\"app\" data-page=\""
+                            + pageJson + "\"></div></body></html>";
+                }
+
+                @Override
+                public String getRawTemplate() {
+                    return "<html><head>@inertiaHead</head><body>@inertia</body></html>";
+                }
+            };
+        }
+
+        @Test
+        void rendersWithSsrWhenConfigured() throws IOException {
+            InertiaConfig config = InertiaConfig.builder()
+                    .version("1.0.0")
+                    .templateResolver(ssrTemplate())
+                    .ssrClient(successSsrClient)
+                    .ssrEnabled(true)
+                    .build();
+            InertiaEngine ssrEngine = new InertiaEngine(config);
+
+            var req = new StubInertiaRequest();
+            var res = new StubInertiaResponse();
+
+            ssrEngine.render(req, res, "Home", Map.of("name", "World"));
+
+            assertThat(res.getBody()).contains("<title>SSR</title>");
+            assertThat(res.getBody()).contains("SSR Content");
+        }
+
+        @Test
+        void skipsSsrWhenDisabledViaRenderOptions() throws IOException {
+            InertiaConfig config = InertiaConfig.builder()
+                    .version("1.0.0")
+                    .templateResolver(ssrTemplate())
+                    .ssrClient(successSsrClient)
+                    .ssrEnabled(true)
+                    .build();
+            InertiaEngine ssrEngine = new InertiaEngine(config);
+
+            var req = new StubInertiaRequest();
+            var res = new StubInertiaResponse();
+
+            ssrEngine.render(req, res, "Home", Map.of(),
+                    RenderOptions.builder().ssr(false).build());
+
+            assertThat(res.getBody()).doesNotContain("SSR Content");
+            assertThat(res.getBody()).contains("<div id=\"app\" data-page=\"");
+        }
+
+        @Test
+        void neverCallsSsrForJsonRequests() throws IOException {
+            SsrClient shouldNotBeCalled = pageJson -> {
+                throw new AssertionError("SSR should not be called for JSON requests");
+            };
+
+            InertiaConfig config = InertiaConfig.builder()
+                    .version("1.0.0")
+                    .templateResolver(pageJson -> "<html>" + pageJson + "</html>")
+                    .ssrClient(shouldNotBeCalled)
+                    .ssrEnabled(true)
+                    .build();
+            InertiaEngine ssrEngine = new InertiaEngine(config);
+
+            var req = new StubInertiaRequest().asInertia();
+            var res = new StubInertiaResponse();
+
+            ssrEngine.render(req, res, "Home", Map.of());
+
+            assertThat(res.getContentType()).isEqualTo("application/json");
+        }
+
+        @Test
+        void rendersWithoutSsrWhenNoClientConfigured() throws IOException {
+            // Default engine from setUp — no SSR client
+            var req = new StubInertiaRequest();
+            var res = new StubInertiaResponse();
+
+            engine.render(req, res, "Home", Map.of("name", "World"));
+
+            assertThat(res.getBody()).contains("<div id=\"app\" data-page=\"");
         }
     }
 }

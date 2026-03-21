@@ -6,18 +6,26 @@ import io.inertia.core.props.MergeProp;
 import io.inertia.core.props.OnceProp;
 import io.inertia.core.props.OptionalProp;
 import io.inertia.core.props.Prop;
+import io.inertia.core.props.Resolvable;
 
 import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.stream.Collectors;
 
 public class InertiaEngine {
 
     private final InertiaConfig config;
+    private final SsrGateway ssrGateway;
     private final List<SharedPropsResolver> sharedPropsResolvers = new CopyOnWriteArrayList<>();
 
     public InertiaEngine(InertiaConfig config) {
         this.config = Objects.requireNonNull(config);
+        this.ssrGateway = new SsrGateway(
+                config.getTemplateResolver(),
+                config.getSsrClient(),
+                config.isSsrFailOnError()
+        );
     }
 
     public InertiaConfig getConfig() {
@@ -38,6 +46,12 @@ public class InertiaEngine {
     public void render(InertiaRequest req, InertiaResponse res,
                        String component, Map<String, Object> props,
                        RenderOptions options) throws IOException {
+        Objects.requireNonNull(req, "req must not be null");
+        Objects.requireNonNull(res, "res must not be null");
+        Objects.requireNonNull(component, "component must not be null");
+        Objects.requireNonNull(options, "options must not be null");
+        if (props == null) props = Map.of();
+
         Map<String, Object> mergedProps = mergeSharedProps(req, props);
         boolean isPartialReload = isPartialReloadFor(req, component);
 
@@ -74,7 +88,7 @@ public class InertiaEngine {
         if (isInertiaRequest(req)) {
             renderJson(res, page);
         } else {
-            renderHtml(res, page);
+            renderHtml(res, page, options);
         }
     }
 
@@ -124,7 +138,9 @@ public class InertiaEngine {
     private Set<String> parseExceptOnceProps(InertiaRequest req) {
         String header = req.getHeader("X-Inertia-Except-Once-Props");
         if (header == null || header.isBlank()) return Set.of();
-        return Set.of(header.split(","));
+        return Arrays.stream(header.split(","))
+                .map(String::trim)
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     private void filterExceptOnceProps(Map<String, Object> props,
@@ -193,7 +209,9 @@ public class InertiaEngine {
         // Partial reload with "only" list (also used by client to fetch deferred props)
         String partialData = req.getHeader("X-Inertia-Partial-Data");
         if (partialData != null && !partialData.isBlank()) {
-            Set<String> only = Set.of(partialData.split(","));
+            Set<String> only = Arrays.stream(partialData.split(","))
+                    .map(String::trim)
+                    .collect(Collectors.toUnmodifiableSet());
             Map<String, Object> result = new LinkedHashMap<>();
             for (Map.Entry<String, Object> entry : props.entrySet()) {
                 String key = entry.getKey();
@@ -208,7 +226,9 @@ public class InertiaEngine {
         // Partial reload with "except" list
         String partialExcept = req.getHeader("X-Inertia-Partial-Except");
         if (partialExcept != null && !partialExcept.isBlank()) {
-            Set<String> except = Set.of(partialExcept.split(","));
+            Set<String> except = Arrays.stream(partialExcept.split(","))
+                    .map(String::trim)
+                    .collect(Collectors.toUnmodifiableSet());
             Map<String, Object> result = new LinkedHashMap<>();
             for (Map.Entry<String, Object> entry : props.entrySet()) {
                 String key = entry.getKey();
@@ -262,12 +282,8 @@ public class InertiaEngine {
         Map<String, Object> resolved = new LinkedHashMap<>();
         for (Map.Entry<String, Object> entry : props.entrySet()) {
             Object value = entry.getValue();
-            if (value instanceof Prop<?> prop) {
-                resolved.put(entry.getKey(), prop.resolve());
-            } else if (value instanceof MergeProp<?> mp) {
-                resolved.put(entry.getKey(), mp.resolve());
-            } else if (value instanceof OnceProp<?> op) {
-                resolved.put(entry.getKey(), op.resolve());
+            if (value instanceof Resolvable<?> resolvable) {
+                resolved.put(entry.getKey(), resolvable.resolve());
             } else {
                 resolved.put(entry.getKey(), value);
             }
@@ -285,9 +301,18 @@ public class InertiaEngine {
         res.writeBody(config.getJsonSerializer().serialize(page));
     }
 
-    private void renderHtml(InertiaResponse res, PageObject page) throws IOException {
+    private boolean resolveSsr(RenderOptions options) {
+        if (options.getSsr() != null) {
+            return options.getSsr();
+        }
+        return config.isSsrEnabled() && config.getSsrClient() != null;
+    }
+
+    private void renderHtml(InertiaResponse res, PageObject page,
+                            RenderOptions options) throws IOException {
         String pageJson = config.getJsonSerializer().serialize(page);
-        String html = config.getTemplateResolver().resolve(pageJson);
+        boolean useSsr = resolveSsr(options);
+        String html = ssrGateway.resolve(pageJson, useSsr);
         res.setStatus(200);
         res.setHeader("Vary", "X-Inertia");
         res.setContentType("text/html; charset=utf-8");
