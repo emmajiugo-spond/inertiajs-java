@@ -86,11 +86,16 @@ public class EventController {
 //    public void store(@RequestBody Map<String, String> body,
 //                      HttpServletRequest req, HttpServletResponse res) {
 //
-//        Validator.validateMapOrThrow(body, Map.of(
+//        ValidationResponse response = Validator.validateMap(body, Map.of(
 //                "title", "required",
 //                "description", "required",
 //                "date", "required"
 //        ));
+//
+//        if (!response.valid()) {
+//            inertia.redirectWithErrors(req, res, "/events/create", response.toFlatMap());
+//            return;
+//        }
 //
 //        eventService.create(new Event(
 //                null, body.get("title"), body.get("description"),
