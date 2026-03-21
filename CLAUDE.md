@@ -9,7 +9,8 @@ Port+adapter pattern. All protocol logic lives in `inertiajs-core` (zero framewo
 - `inertiajs-core` — Protocol engine, page object, prop types, template resolution
 - `inertiajs-spring` — Spring Boot adapter with auto-configuration
 - `inertiajs-javalin` — Javalin adapter with plugin + middleware
-- `examples/example-spring` — Vue 3 + Spring Boot demo app
+- `examples/example-spring` — Vue 3 + Spring Boot demo app (CSR)
+- `examples/example-spring-ssr` — Vue 3 + Spring Boot demo app with SSR
 - `examples/example-javalin` — Vue 3 + Javalin demo app
 
 ## Key Patterns
