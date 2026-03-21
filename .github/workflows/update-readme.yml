@@ -1,0 +1,47 @@
+name: Update README
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to update in README'
+        required: true
+        type: string
+    secrets:
+      RELEASE_TOKEN:
+        required: true
+
+jobs:
+  update-readme:
+    name: Update README
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Update README with released version
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Update Maven <version> tags
+          sed -i -E "s|<version>[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?</version>|<version>${VERSION}</version>|g" README.md
+
+          # Update Gradle dependency strings
+          sed -i -E "s|:inertiajs-core:[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?|:inertiajs-core:${VERSION}|g" README.md
+          sed -i -E "s|:inertiajs-spring:[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?|:inertiajs-spring:${VERSION}|g" README.md
+          sed -i -E "s|:inertiajs-javalin:[0-9]+\.[0-9]+\.[0-9]+(-SNAPSHOT)?|:inertiajs-javalin:${VERSION}|g" README.md
+
+          if git diff --quiet README.md; then
+            echo "No changes to README.md"
+          else
+            git add README.md
+            git commit -m "docs: update README with version ${VERSION}"
+            git push origin main
+          fi

@@ -1,0 +1,43 @@
+name: Publish CLI to npm
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to publish'
+        required: true
+        type: string
+    secrets:
+      NPM_TOKEN:
+        required: true
+
+jobs:
+  publish:
+    name: Publish create-inertiajs-java to npm
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update package.json version
+        working-directory: packages/create-inertiajs-java
+        run: npm version ${{ inputs.version }} --no-git-tag-version
+
+      - name: Install dependencies
+        working-directory: packages/create-inertiajs-java
+        run: npm install
+
+      - name: Publish to npm
+        working-directory: packages/create-inertiajs-java
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public
