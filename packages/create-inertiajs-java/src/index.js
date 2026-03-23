@@ -6,10 +6,28 @@ const { bold, cyan, green, red, dim, yellow } = kleur
 import fs from 'node:fs'
 import path from 'node:path'
 
+const VERSION = '0.1.0'
+
 function parseArgs() {
   const args = process.argv.slice(2)
   const parsed = {}
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--help' || args[i] === '-h') {
+      console.log(`
+  Usage: npx create-inertiajs-java [options]
+
+  Options:
+    --frontend <vue|react|svelte>  Frontend framework
+    --backend  <spring|javalin>    Backend framework
+    --version, -v                  Show version
+    --help, -h                     Show this help
+`)
+      process.exit(0)
+    }
+    if (args[i] === '--version' || args[i] === '-v') {
+      console.log(VERSION)
+      process.exit(0)
+    }
     if (args[i] === '--backend' && args[i + 1]) parsed.backend = args[++i]
     else if (args[i] === '--frontend' && args[i + 1]) parsed.frontend = args[++i]
   }
@@ -108,7 +126,7 @@ function scaffoldFrontend(projectDir, frontend) {
     ${deps[frontend].devDep},
     "vite": "^8.0.0",
     "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^25.5.0"
   }
 }
 `)
@@ -145,7 +163,7 @@ export default defineConfig({
     outDir: '../src/main/resources/static',
     emptyOutDir: true,
     rolldownOptions: {
-      input: 'src/app.ts',
+      input: '${frontend === 'react' ? 'src/app.tsx' : 'src/app.ts'}',
       output: {
         entryFileNames: 'assets/app.js',
         chunkFileNames: 'assets/[name].js',
@@ -235,21 +253,19 @@ createInertiaApp({
 }
 `)
 
-  // Update vite.config to use app.tsx
-  const viteConfig = fs.readFileSync(path.join(dir, 'vite.config.ts'), 'utf-8')
-  write(path.join(dir, 'vite.config.ts'), viteConfig.replace('src/app.ts', 'src/app.tsx'))
 }
 
 function scaffoldSvelte(dir) {
   write(path.join(dir, 'src/app.ts'), `import { createInertiaApp } from '@inertiajs/svelte'
+import { mount } from 'svelte'
 
 createInertiaApp({
   resolve: (name: string) => {
     const pages = import.meta.glob('./pages/**/*.svelte', { eager: true }) as Record<string, { default: any }>
     return pages[\`./pages/\${name}.svelte\`]
   },
-  setup({ el, App }) {
-    new App({ target: el })
+  setup({ el, App, props }) {
+    mount(App, { target: el, props })
   },
 })
 `)
@@ -272,6 +288,7 @@ function scaffoldTemplates(projectDir) {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My App</title>
+    @inertiaHead
 </head>
 <body>
     @inertia
@@ -291,6 +308,7 @@ function scaffoldTemplates(projectDir) {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My App</title>
+    @inertiaHead
 </head>
 <body>
     @inertia
@@ -321,10 +339,10 @@ async function printNextSteps(backend, frontend) {
   // Step 1: Add dependency
   console.log(bold('  Step 1 of 4') + ' — Add the dependency to your project:\n')
   console.log(dim('     Gradle (build.gradle.kts):'))
-  console.log(`     implementation("io.inertia:${dep}:0.1.0-SNAPSHOT")\n`)
+  console.log(`     implementation("io.github.emmajiugo:${dep}:0.1.0-SNAPSHOT")\n`)
   console.log(dim('     Maven (pom.xml):'))
   console.log(`     <dependency>`)
-  console.log(`       <groupId>io.inertia</groupId>`)
+  console.log(`       <groupId>io.github.emmajiugo</groupId>`)
   console.log(`       <artifactId>${dep}</artifactId>`)
   console.log(`       <version>0.1.0-SNAPSHOT</version>`)
   console.log(`     </dependency>\n`)
